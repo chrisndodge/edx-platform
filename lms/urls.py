@@ -861,6 +861,9 @@ if settings.FEATURES.get('ENABLE_OAUTH2_PROVIDER'):
         # views directly, but should rather use the wrapped views at /oauth2/
         url(r'^_o/', include('oauth2_provider.urls', namespace='oauth2_provider')),
     )
+    urlpatterns += (
+        url(r'^partner_api/', include('partner_api.urls', namespace='api_partner')),
+    )
 
 if settings.FEATURES.get('ENABLE_LMS_MIGRATION'):
     urlpatterns += (
