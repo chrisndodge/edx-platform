@@ -73,9 +73,9 @@ class PartnerApiRevokeTokenView(dot_base_views.RevokeTokenView):
     validator_class = PartnerApiOAuth2Validator
 
 
-@partner_api_protected_resource(scopes=['read'])
+@partner_api_protected_resource(scopes=['profile'])
 def get_my_info(request):
     return JsonResponse({
-        'user_id': request.user.id,
+        'id': request.user.id,
         'username': request.user.username
     })
