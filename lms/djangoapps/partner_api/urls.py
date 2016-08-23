@@ -11,7 +11,12 @@ from . import views
 
 urlpatterns = patterns(
     '',
-    url(r'^/oauth2/authorize/?$', csrf_exempt(views.AuthorizationView.as_view()), name='authorize'),
-    url(r'^/oauth2/access_token/?$', csrf_exempt(views.AccessTokenView.as_view()), name='access_token'),
-    url(r'^/oauth2/revoke_token/?$', csrf_exempt(views.RevokeTokenView.as_view()), name='revoke_token'),
+    # OAuth flows
+    url(r'^oauth2/authorize/?$', csrf_exempt(views.PartnerApiAuthorizationView.as_view()), name='authorize'),
+    url(r'^oauth2/access_token/?$', csrf_exempt(views.PartnerApiAccessTokenView.as_view()), name='access_token'),
+    url(r'^oauth2/revoke_token/?$', csrf_exempt(views.PartnerApiRevokeTokenView.as_view()), name='revoke_token'),
+
+    # Protected APIs
+    url(r'^v1/my_info/?$', views.get_my_info)
 )
+

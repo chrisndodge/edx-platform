@@ -33,7 +33,7 @@ class PartnerApiOAuth2Validator(OAuth2Validator):
         # we want to be sure that request has the client attribute!
         assert hasattr(request, "client"), "'request' instance has no 'client' attribute"
 
-        Application = get_application_model()
+        Application = PartnerApiApplication()
         try:
             request.client = request.client or PartnerApiApplication.objects.get(client_id=client_id)
             return request.client

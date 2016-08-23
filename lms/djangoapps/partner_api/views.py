@@ -1,9 +1,17 @@
 from oauth2_provider.views import base as dot_base_views
+from oauth2_provider.exceptions import OAuthToolkitError
+from oauth2_provider.settings import oauth2_settings
+
+from django.views.generic import View
+from django.http import JsonResponse
+
+from .validators import PartnerApiOAuth2Validator
 from .models import PartnerApiApplication
+from .decorators import partner_api_protected_resource
 
 
 class PartnerApiAuthorizationView(dot_base_views.AuthorizationView):
-    validator_class = 'partner_api.validator.PartnerApiOAuth2Validator'
+    validator_class = PartnerApiOAuth2Validator
 
     def get(self, request, *args, **kwargs):
         """
@@ -56,9 +64,18 @@ class PartnerApiAuthorizationView(dot_base_views.AuthorizationView):
         except OAuthToolkitError as error:
             return self.error_response(error)
 
-class PartnerApiTokenView(dot_base_views.TokenView):
-    validator_class = 'partner_api.validator.PartnerApiOAuth2Validator'
+
+class PartnerApiAccessTokenView(dot_base_views.TokenView):
+    validator_class = PartnerApiOAuth2Validator
 
 
-class PartnerApiRevokenTokenView(dot_base_views.RevokeTokenView):
-    validator_class = 'partner_api.validator.PartnerApiOAuth2Validator'
+class PartnerApiRevokeTokenView(dot_base_views.RevokeTokenView):
+    validator_class = PartnerApiOAuth2Validator
+
+
+@partner_api_protected_resource(scopes=['read'])
+def get_my_info(request):
+    return JsonResponse({
+        'user_id': request.user.id,
+        'username': request.user.username
+    })
