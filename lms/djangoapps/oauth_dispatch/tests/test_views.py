@@ -3,9 +3,12 @@ Tests for Blocks Views
 """
 
 import json
+from pytz import utc
+from datetime import datetime
 
 import ddt
 from django.test import RequestFactory, TestCase
+from django.conf import settings
 from django.core.urlresolvers import reverse
 import httpretty
 from provider import constants
@@ -16,7 +19,10 @@ from third_party_auth.tests.utils import ThirdPartyOAuthTestMixin, ThirdPartyOAu
 from .constants import DUMMY_REDIRECT_URL
 from .. import adapters
 from .. import views
+from .. import models
 from . import mixins
+
+from oauth2_provider import models as dot_models
 
 
 class _DispatchingViewTestCase(TestCase):
@@ -44,6 +50,17 @@ class _DispatchingViewTestCase(TestCase):
             redirect_uri=DUMMY_REDIRECT_URL,
             client_id='dop-app-client-id',
         )
+
+        # Create a "restricted" DOT Application which means any AccessToken/JWT
+        # generated for this application will be immediately expired
+        self.restricted_dot_app = self.dot_adapter.create_public_client(
+            name='test restricted dot application',
+            user=self.user,
+            redirect_uri=DUMMY_REDIRECT_URL,
+            client_id='dot-restricted-app-client-id',
+        )
+        models.RestrictedApplication.objects.create(application=self.restricted_dot_app)
+
 
     def _post_request(self, user, client, token_type=None):
         """
@@ -95,6 +112,23 @@ class TestAccessTokenView(mixins.AccessTokenMixin, _DispatchingViewTestCase):
         self.assertIn('scope', data)
         self.assertIn('token_type', data)
 
+    def test_restricted_access_token_fields(self):
+        response = self._post_request(self.user, self.restricted_dot_app)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertIn('access_token', data)
+        self.assertIn('expires_in', data)
+        self.assertIn('scope', data)
+        self.assertIn('token_type', data)
+
+        # Restricted applications have immediately expired tokens
+        self.assertTrue(data['expires_in'] < 0)
+
+        # double check that the token stored in the DB is marked as expired
+        access_token = dot_models.AccessToken.objects.get(token=data['access_token'])
+        self.assertEqual(access_token.expires, datetime(1970, 1, 1, tzinfo=utc))
+
+
     @ddt.data('dop_app', 'dot_app')
     def test_jwt_access_token(self, client_attr):
         client = getattr(self, client_attr)
@@ -104,6 +138,27 @@ class TestAccessTokenView(mixins.AccessTokenMixin, _DispatchingViewTestCase):
         self.assertIn('expires_in', data)
         self.assertEqual(data['token_type'], 'JWT')
         self.assert_valid_jwt_access_token(data['access_token'], self.user, data['scope'].split(' '))
+
+    def test_restricted_jwt_access_token(self):
+        """
+        Verify that when requesting a JWT token from a restricted Application
+        within the DOT subsystem, that our claims is marked as already expired
+        (i.e. expiry set to Jan 1, 1970)
+        """
+        response = self._post_request(self.user, self.restricted_dot_app, token_type='jwt')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertIn('expires_in', data)
+
+        # jwt must indicate that it is already expired
+        self.assertTrue(data['expires_in'] < 0)
+        self.assertEqual(data['token_type'], 'JWT')
+        self.assert_valid_jwt_access_token(
+            data['access_token'],
+            self.user,
+            data['scope'].split(' '),
+            should_be_expired=True
+        )
 
     def test_dot_access_token_provides_refresh_token(self):
         response = self._post_request(self.user, self.dot_app)
@@ -190,6 +245,48 @@ class TestAuthorizationView(_DispatchingViewTestCase):
 
         check_response = getattr(self, '_check_{}_response'.format(client_type))
         check_response(response)
+
+    def test_check_dot_authorization_page_get(self):
+        """
+        Make sure we get the overridden Authorization page - not
+        the default django-oauth-toolkit when we perform a page load
+        """
+        self.client.login(username=self.user.username, password='test')
+        response = self.client.get(
+            '/oauth2/authorize/',
+            {
+                'client_id': self.dot_app.client_id,
+                'response_type': 'code',
+                'state': 'random_state_string',
+                'redirect_uri': DUMMY_REDIRECT_URL,
+                'scope': 'identity'
+            },
+            follow=True,
+        )
+
+        # are the requested scopes on the page? We only requested 'identity', lets make
+        # sure the page only lists that one
+        self.assertContains(response, settings.OAUTH2_PROVIDER['SCOPES']['identity'])
+        self.assertNotContains(response, settings.OAUTH2_PROVIDER['SCOPES']['read'])
+        self.assertNotContains(response, settings.OAUTH2_PROVIDER['SCOPES']['write'])
+        self.assertNotContains(response, settings.OAUTH2_PROVIDER['SCOPES']['email'])
+        self.assertNotContains(response, settings.OAUTH2_PROVIDER['SCOPES']['profile'])
+
+        # is the application name specified?
+        self.assertContains(
+            response,
+            "Authorize {name}".format(name=self.dot_app.name)
+        )
+
+        # are the cancel and allow buttons on the page?
+        self.assertContains(
+            response,
+            '<button type="submit" class="btn btn-authorization-cancel" name="cancel"/>Cancel</button>'
+        )
+        self.assertContains(
+            response,
+            '<button type="submit" class="btn btn-authorization-allow" name="allow" value="Authorize"/>Allow</button>'
+        )
 
     def _check_dot_response(self, response):
         """

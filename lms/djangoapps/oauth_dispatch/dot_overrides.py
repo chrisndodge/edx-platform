@@ -3,8 +3,36 @@ Classes that override default django-oauth-toolkit behavior
 """
 from __future__ import unicode_literals
 
+import time
+from datetime import datetime
+from pytz import utc
+
 from django.contrib.auth import authenticate, get_user_model
 from oauth2_provider.oauth2_validators import OAuth2Validator
+
+from oauth2_provider.models import AccessToken
+from django.db.models.signals import pre_save
+from django.dispatch import receiver
+from django.conf import settings
+
+from .models import RestrictedApplication
+
+
+@receiver(pre_save, sender=AccessToken)
+def on_access_token_presave(sender, instance, *args, **kwargs):
+    """
+    A hook on the AccessToken. For when we grant authorization-codes,
+    since we do not have protected scopes, we must mark all
+    AcessTokens as expired for 'restricted applications'.
+
+    We do this as a pre-save hook on the ORM
+    """
+
+    is_application_restricted = RestrictedApplication.objects.filter(application=instance.application).exists()
+
+    if is_application_restricted:
+        # put the expire timestamp into the beginning of the epoch
+        instance.expires = datetime(1970, 1, 1, tzinfo=utc)
 
 
 class EdxOAuth2Validator(OAuth2Validator):
@@ -60,6 +88,16 @@ class EdxOAuth2Validator(OAuth2Validator):
             request.user = request.client.user
 
         super(EdxOAuth2Validator, self).save_bearer_token(token, request, *args, **kwargs)
+
+        is_application_restricted = RestrictedApplication.objects.filter(application=request.client).exists()
+
+        if is_application_restricted:
+            # For now, since Open edX doesn't have the protection of scopes, any access token
+            # that was generated for 'restricted applications' (aka external 3rd parties)
+            # must be automatically expired. So let's update
+            # the token dictionary, so set the expires_in field be
+            # on Jan. 1, 1970
+            token['expires_in'] = -int(time.time())
 
         # Restore the original request attributes
         request.grant_type = grant_type

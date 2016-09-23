@@ -2,9 +2,10 @@
 Tests for DOT Adapter
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import ddt
+from pytz import utc
 from django.test import TestCase
 from django.utils.timezone import now
 from oauth2_provider import models
@@ -12,7 +13,8 @@ from oauth2_provider import models
 from student.tests.factories import UserFactory
 
 from ..adapters import DOTAdapter
-from .constants import DUMMY_REDIRECT_URL
+from .constants import DUMMY_REDIRECT_URL, DUMMY_REDIRECT_URL2
+from ..models import RestrictedApplication
 
 
 @ddt.ddt
@@ -38,6 +40,13 @@ class DOTAdapterTestCase(TestCase):
             redirect_uri=DUMMY_REDIRECT_URL,
             client_id='confidential-client-id',
         )
+        self.restricted_client = self.adapter.create_confidential_client(
+            name='restricted app',
+            user=self.user,
+            redirect_uri=DUMMY_REDIRECT_URL2,
+            client_id='restricted-client-id',
+        )
+        RestrictedApplication.objects.create(application=self.restricted_client)
 
     @ddt.data(
         ('confidential', models.Application.CLIENT_CONFIDENTIAL),
@@ -51,7 +60,14 @@ class DOTAdapterTestCase(TestCase):
         self.assertEqual(client.client_type, client_type)
 
     def test_get_client(self):
-        client = self.adapter.get_client(client_type=models.Application.CLIENT_CONFIDENTIAL)
+        """
+        Read back one of the confidential clients (there are two)
+        and verify that we get back what we expected
+        """
+        client = self.adapter.get_client(
+            redirect_uris=DUMMY_REDIRECT_URL,
+            client_type=models.Application.CLIENT_CONFIDENTIAL
+        )
         self.assertIsInstance(client, models.Application)
         self.assertEqual(client.client_type, models.Application.CLIENT_CONFIDENTIAL)
 
@@ -74,3 +90,18 @@ class DOTAdapterTestCase(TestCase):
             expires=now() + timedelta(days=30),
         )
         self.assertEqual(self.adapter.get_access_token(token_string='token-id'), token)
+
+    def test_get_restricted_access_token(self):
+        '''
+        Make sure when generating an access_token for a restricted client
+        that the token is immediately expired
+        '''
+        token = models.AccessToken.objects.create(
+            token='expired-token-id',
+            application=self.restricted_client,
+            user=self.user,
+            expires=now() + timedelta(days=30),
+        )
+
+        readback_token = self.adapter.get_access_token(token_string='expired-token-id')
+        self.assertEqual(token.expires, datetime(1970, 1, 1, tzinfo=utc))

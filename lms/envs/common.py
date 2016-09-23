@@ -446,8 +446,16 @@ OAUTH2_PROVIDER = {
         'write': 'Write scope',
         'email': 'Email scope',
         'profile': 'Profile scope',
-    }
+        # The identity scope grants a basic permission to get
+        # the user's preferred_username. This can be used by
+        # 3rd party apps to link accounts. No other data is exchanged if
+        # this is the only scope requested
+        'identity': 'Receive basic identity information, such as your public username',
+    },
 }
+# This is required for the migrations in oauth_dispatch.models
+# otherwise it fails saying this attribute is not present in Settings
+OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'
 
 ################################## TEMPLATE CONFIGURATION #####################################
 # Mako templating
